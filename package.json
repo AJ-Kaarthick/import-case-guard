@@ -1,0 +1,111 @@
+{
+  "name": "import-case-guard",
+  "displayName": "Import Case Guard",
+  "description": "Catches local relative import-path casing mistakes that work on case-insensitive filesystems but fail on Linux CI/build systems.",
+  "version": "1.0.0",
+  "publisher": "ajkaarthick",
+  "author": {
+    "name": "AJ Kaarthick"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AJ-Kaarthick/import-case-guard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AJ-Kaarthick/import-case-guard/issues"
+  },
+  "homepage": "https://github.com/AJ-Kaarthick/import-case-guard#readme",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "import",
+    "case-sensitive",
+    "case-insensitive",
+    "casing",
+    "linter",
+    "quickfix"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "import-case-guard.scanCurrentFile",
+        "title": "Scan Current File",
+        "category": "Import Case Guard"
+      },
+      {
+        "command": "import-case-guard.scanWorkspace",
+        "title": "Scan Workspace",
+        "category": "Import Case Guard"
+      },
+      {
+        "command": "import-case-guard.fixAllInFile",
+        "title": "Fix All in Current File",
+        "category": "Import Case Guard"
+      },
+      {
+        "command": "import-case-guard.fixAllInWorkspace",
+        "title": "Fix All in Workspace",
+        "category": "Import Case Guard"
+      }
+    ],
+    "configuration": {
+      "title": "Import Case Guard",
+      "properties": {
+        "importCaseGuard.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable Import Case Guard linting."
+        },
+        "importCaseGuard.debounceMs": {
+          "type": "number",
+          "default": 300,
+          "description": "Debounce delay in milliseconds before rescanning changed files."
+        },
+        "importCaseGuard.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/.git/**",
+            "**/coverage/**",
+            "**/.next/**",
+            "**/.nuxt/**"
+          ],
+          "description": "Glob patterns of files and directories to exclude from analysis."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.config.mjs --production",
+    "dev": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run test:all",
+    "test:all": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/vscode": "^1.75.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.4.5"
+  }
+}
