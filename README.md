@@ -6,27 +6,25 @@
 
 ## The Problem: Case Mismatches in Cross-Platform Development
 
-When developing on macOS (APFS default) or Windows (NTFS default), the operating system's filesystem preserves file casing but ignores case when resolving file paths. For example, if you have:
+When developing on macOS (APFS default) or Windows (NTFS default), the operating system's filesystem preserves file casing but ignores case when resolving file paths.
 
-```
+**Actual file on disk:**
+```text
 src/components/Button.tsx
 ```
 
-and you import it using:
-
+**Import statement in code:**
 ```ts
 import Button from "./components/button";
 ```
 
-your local development server, bundler, and IDE may resolve the file without any warning or error.
+On macOS or Windows, local development servers, bundlers, and editors may resolve this import without warning. However, when the code is pushed to a Linux-based CI pipeline, Docker container, or server, the Linux filesystem (`ext4`) treats paths case-sensitively. The build immediately fails:
 
-However, when this code is committed and pushed to a Linux-based CI pipeline or production container, the Linux filesystem (ext4) treats paths case-sensitively. The build fails with:
-
-```
-Module not found: Can't resolve './components/button' in '.../src'
+```text
+Module not found: Can't resolve './components/button' in '/project/src'
 ```
 
-**Import Case Guard** detects these casing discrepancies early in your editor as you type and provides contextual Quick Fix options.
+**Import Case Guard** catches these casing mistakes directly in your editor as you type, providing diagnostics and contextual Quick Fixes before code reaches CI.
 
 ---
 
@@ -46,7 +44,7 @@ Module not found: Can't resolve './components/button' in '.../src'
 
 - **Contextual Diagnostics**: Native VS Code warnings highlight only import specifiers whose path casing differs from the actual filesystem entries.
 - **Detailed Explanations on Hover**: Hovering over the diagnostic explains the requested path, the actual filesystem path, and why cross-platform builds fail.
-- **Accurate Quick Fix (`Ctrl+.` or `Cmd+.`)**: Replaces only the import specifier with the exact filesystem casing, preserving quote style (`'`, `"`, `` ` ``), formatting, and surrounding code.
+- **Accurate Quick Fix (`Ctrl+.` or `Cmd+.`)**: Replaces only the import specifier with the exact filesystem casing, preserving quote styles (`'`, `"`, and `` ` ``), formatting, and surrounding code.
 - **Multi-Scope Bulk Remediation**:
   - Fix a single import directly.
   - Fix all casing issues in the active file.
@@ -78,28 +76,34 @@ Import Case Guard analyzes local relative imports (`./` or `../`):
   import { util } from "../utils";
   import { from } from "./components/button"; // 'from' named bindings supported
   ```
+
 - **Side-effect imports**:
   ```ts
   import "./styles/theme.css";
   ```
+
 - **Type-only imports**:
   ```ts
   import type { User } from "../models/user";
   ```
+
 - **Re-exports**:
   ```ts
   export { Button } from "./components/button";
   export { from } from "./components/button";
   export * from "../utils/helpers";
   ```
-- **CommonJS require**:
+
+- **CommonJS `require()`**:
   ```js
   const helper = require("./utils/helper");
   ```
-- **Dynamic imports**:
+
+- **Dynamic `import()`**:
   ```ts
   const modal = await import("./components/Modal");
   ```
+
 - **Static template literals without interpolation**:
   ```ts
   const helper = require(`./utils/helper`);
@@ -111,7 +115,7 @@ To avoid noise and stay focused on relative path casing:
 
 - **Package imports**: `react`, `lodash`, `node:path`, `@scope/package` are ignored.
 - **Alias imports**: `@/components/Button`, `~/utils` are ignored in v1.
-- **Dynamic expressions**: `require(someVar)`, `import(getPath())`, or template literals with interpolation (``import(`./components/${name}`)``) are not statically analyzable and are ignored.
+- **Dynamic expressions**: Expressions with runtime variables (`require(someVar)`, `import(getPath())`) and template literals with interpolation (such as `` `import(`./components/${name}`)` ``) are not statically analyzable and are ignored.
 - **Comments & Strings**: Text inside comments (`// ...`, `/* ... */`), regular expressions (e.g., `/\/*$/`), or arbitrary string variables (`const msg = "import ...";`) are completely ignored.
 - **Nonexistent paths**: If a file does not exist on disk, Import Case Guard does not flag it. It only flags paths that exist on disk with differing casing.
 
@@ -119,7 +123,17 @@ To avoid noise and stay focused on relative path casing:
 
 ## Scoped Quick Fix (`Ctrl+.` / `Cmd+.`)
 
-When a mismatch is identified, place your cursor on the import and press `Ctrl+.` (Windows/Linux) or `Cmd+.` (macOS) to view the scoped remediation menu:
+When a mismatch is identified:
+
+```ts
+// Before Quick Fix:
+import Button from "./components/button";
+
+// After Quick Fix:
+import Button from "./components/Button";
+```
+
+Place your cursor on the import and press `Ctrl+.` (Windows/Linux) or `Cmd+.` (macOS) to view the scoped remediation menu:
 
 1. **`Correct import casing to '...'`** (*Fix this import*):
    - Immediately replaces the selected import specifier with the exact filesystem casing.
@@ -134,7 +148,7 @@ When a mismatch is identified, place your cursor on the import and press `Ctrl+.
 
 ### Bulk Fix Safety Principles
 - **Coordinate Pre-Validation**: Every edit range is pre-validated against the source text before writing.
-- **Quote & Formatting Preservation**: Replaces only the interior string literal, preserving `'`, `"`, `` ` ``, indentation, and semicolons.
+- **Quote & Formatting Preservation**: Replaces only the interior string literal, preserving quote styles (`'`, `"`, and `` ` ``), indentation, and semicolons.
 - **Validation Failure Protection**: All edits are prevalidated and applied as a coordinated WorkspaceEdit. If prevalidation fails or the user cancels, no edits are applied.
 - **Standard Undoability**: All applied edits are standard undoable editor actions (`Ctrl+Z` / `Cmd+Z`).
 - **Filesystem Integrity**: Files and directories on disk are **never** renamed or modified.
