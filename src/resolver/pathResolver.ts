@@ -114,7 +114,11 @@ export function resolveAndValidateImport(
       return null; // Package import or unmapped import
     }
 
-    return resolveAliasImport(importingFilePath, specifier, matchingMappings, fs, cache);
+    // TypeScript module-resolution semantics:
+    // The most specific matching pattern is selected. If its target substitutions fail
+    // to resolve, resolution does NOT fall back to a less-specific matching pattern.
+    const winningMapping = matchingMappings[0];
+    return resolveAliasImport(importingFilePath, specifier, winningMapping, fs, cache);
   }
 
   const parsed = parseRelativeSpecifier(specifier);
@@ -383,7 +387,7 @@ function buildResult(
 function resolveAliasImport(
   importingFilePath: string,
   specifier: string,
-  matchingMappings: PathMapping[],
+  mapping: PathMapping,
   fs: IFileSystem,
   cache: DirectoryCache
 ): CaseMismatchDiagnostic | null {
@@ -391,43 +395,42 @@ function resolveAliasImport(
   const separator = isWindowsSep ? '\\' : '/';
   const hasTrailingSlash = specifier.endsWith('/') || specifier.endsWith('\\');
 
-  // Evaluate matching mappings in priority order (exact pattern > longest prefix > longest suffix)
-  for (const mapping of matchingMappings) {
-    if (!mapping.hasWildcard) {
-      if (specifier !== mapping.pattern) {
-        continue;
-      }
-      for (const target of mapping.targets) {
-        const targetPath = path.resolve(mapping.baseDir, target);
-        if (fs.fileExists(targetPath)) {
-          return null; // exact match on disk
-        }
-        const st = fs.stat(targetPath);
-        if (st && st.isDirectory) {
-          return null;
-        }
-      }
-      continue;
+  // Exact pattern mapping without wildcards (e.g. "@app": ["src/App.tsx"])
+  if (!mapping.hasWildcard) {
+    if (specifier !== mapping.pattern) {
+      return null;
     }
-
-    const wildcardValue = specifier.slice(
-      mapping.prefix.length,
-      specifier.length - (mapping.suffix ? mapping.suffix.length : 0)
-    );
-    const rawSegments = wildcardValue.split(/[/\\]/).filter((s) => s.length > 0);
-
-    if (rawSegments.length === 0) {
-      for (const target of mapping.targets) {
-        const starIdx = target.indexOf('*');
-        const targetPrefix = starIdx !== -1 ? target.slice(0, starIdx) : target;
-        const targetDir = path.resolve(mapping.baseDir, targetPrefix);
-        const entries = cache.getEntries(targetDir, fs);
-        if (entries.some((e) => INDEX_FILES.includes(e.name))) {
-          return null;
-        }
+    for (const target of mapping.targets) {
+      const targetPath = path.resolve(mapping.baseDir, target);
+      if (fs.fileExists(targetPath)) {
+        return null; // exact match on disk
       }
-      continue;
+      const st = fs.stat(targetPath);
+      if (st && st.isDirectory) {
+        return null;
+      }
     }
+    return null;
+  }
+
+  const wildcardValue = specifier.slice(
+    mapping.prefix.length,
+    specifier.length - (mapping.suffix ? mapping.suffix.length : 0)
+  );
+  const rawSegments = wildcardValue.split(/[/\\]/).filter((s) => s.length > 0);
+
+  if (rawSegments.length === 0) {
+    for (const target of mapping.targets) {
+      const starIdx = target.indexOf('*');
+      const targetPrefix = starIdx !== -1 ? target.slice(0, starIdx) : target;
+      const targetDir = path.resolve(mapping.baseDir, targetPrefix);
+      const entries = cache.getEntries(targetDir, fs);
+      if (entries.some((e) => INDEX_FILES.includes(e.name))) {
+        return null;
+      }
+    }
+    return null;
+  }
 
     // Iterate through ordered fallback targets
     for (const target of mapping.targets) {
@@ -622,7 +625,6 @@ function resolveAliasImport(
 
       // 0 candidates -> this target does not exist, continue loop to next ordered fallback target
     }
-  }
 
   return null;
 }

@@ -351,6 +351,67 @@ describe("TypeScript & JavaScript Path Alias Casing Support Tests", () => {
       assert.strictEqual(result, null);
     });
 
+    it("REGRESSION: specific mapping wins over general mapping even if specific mapping fails to resolve", () => {
+      // General mapping @/* -> src/* and more specific mapping @/components/* -> nonexistent/*
+      fs.addFile("/project/src/components/Button.tsx", "export const Button = 1;");
+      fs.addFile(
+        "/project/tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "@/*": ["src/*"],
+              "@/components/*": ["nonexistent/*"],
+            },
+          },
+        })
+      );
+
+      const aliasConfig = loadAliasConfig("/project/tsconfig.json", fs);
+      const result = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@/components/button",
+        fs,
+        cache,
+        aliasConfig
+      );
+
+      // TypeScript selects the more specific @/components/* pattern.
+      // Because nonexistent/* fails to resolve, resolution must NOT fall back to the lower-priority @/* mapping.
+      // Therefore, no diagnostic or fix is emitted.
+      assert.strictEqual(result, null);
+    });
+
+    it("REGRESSION: successful ordered fallback within the winning mapping resolves intact", () => {
+      fs.addFile("/project/common-ui/Button.tsx", "export const Button = 1;");
+      fs.addDirectory("/project/custom-ui");
+      fs.addFile(
+        "/project/tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "@ui/*": ["custom-ui/*", "common-ui/*"],
+            },
+          },
+        })
+      );
+
+      const aliasConfig = loadAliasConfig("/project/tsconfig.json", fs);
+      const result = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@ui/button",
+        fs,
+        cache,
+        aliasConfig
+      );
+
+      // Within the winning @ui/* mapping, target 1 (custom-ui/*) is missing, but target 2 (common-ui/*) has a casing mismatch.
+      // Fallback resolves to common-ui/Button.tsx and produces the corrected specifier @ui/Button.
+      assert.notStrictEqual(result, null);
+      assert.strictEqual(result?.hasMismatch, true);
+      assert.strictEqual(result?.correctedSpecifier, "@ui/Button");
+      assert.strictEqual(result?.matchedPattern, "@ui/*");
+    });
+
     it("skips uncertain cases when alias config is marked incomplete", () => {
       fs.addFile("/project/src/Components/Button.tsx", "export const Button = 1;");
       fs.addFile(

@@ -1,7 +1,7 @@
 {
   "name": "import-case-guard",
   "displayName": "Import Case Guard",
-  "description": "Catches local relative import-path casing mistakes that work on case-insensitive filesystems but fail on Linux CI/build systems.",
+  "description": "Catches casing mistakes in local relative imports and configured TypeScript/JavaScript path aliases that pass on macOS/Windows but fail on Linux CI.",
   "version": "1.1.0",
   "icon": "media/icon.png",
   "publisher": "ajkaarthick",
