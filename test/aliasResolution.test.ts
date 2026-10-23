@@ -412,6 +412,264 @@ describe("TypeScript & JavaScript Path Alias Casing Support Tests", () => {
       assert.strictEqual(result?.matchedPattern, "@ui/*");
     });
 
+    it("REGRESSION: wildcard pattern with non-empty suffix detects casing mismatch in file stem", () => {
+      // @lib/*.module -> src/*.module
+      fs.addFile("/project/src/Card.module.tsx", "export const Card = 1;");
+      fs.addFile(
+        "/project/tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "@lib/*.module": ["src/*.module"],
+            },
+          },
+        })
+      );
+
+      const aliasConfig = loadAliasConfig("/project/tsconfig.json", fs);
+      const result = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@lib/card.module",
+        fs,
+        cache,
+        aliasConfig
+      );
+
+      assert.notStrictEqual(result, null);
+      assert.strictEqual(result?.hasMismatch, true);
+      assert.strictEqual(result?.correctedSpecifier, "@lib/Card.module");
+      assert.strictEqual(result?.matchedPattern, "@lib/*.module");
+      assert.strictEqual(result?.actualDiskPath, "/project/src/Card.module");
+    });
+
+    it("REGRESSION: wildcard pattern with non-empty suffix emits no diagnostic on exact casing", () => {
+      fs.addFile("/project/src/Card.module.tsx", "export const Card = 1;");
+      fs.addFile(
+        "/project/tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "@lib/*.module": ["src/*.module"],
+            },
+          },
+        })
+      );
+
+      const aliasConfig = loadAliasConfig("/project/tsconfig.json", fs);
+      const result = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@lib/Card.module",
+        fs,
+        cache,
+        aliasConfig
+      );
+
+      // Exact match produces null
+      assert.strictEqual(result, null);
+    });
+
+    it("REGRESSION: competing suffix patterns select the longest-suffix mapping", () => {
+      fs.addFile(
+        "/project/src/special/Widget.special.module.tsx",
+        "export const Widget = 1;"
+      );
+      fs.addFile(
+        "/project/src/general/widget.special.module.tsx",
+        "export const GeneralWidget = 1;"
+      );
+      fs.addFile(
+        "/project/tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "@lib/*": ["src/general/*"],
+              "@lib/*.module": ["src/modules/*.module"],
+              "@lib/*.special.module": ["src/special/*.special.module"],
+            },
+          },
+        })
+      );
+
+      const aliasConfig = loadAliasConfig("/project/tsconfig.json", fs);
+      const result = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@lib/widget.special.module",
+        fs,
+        cache,
+        aliasConfig
+      );
+
+      // Longest suffix @lib/*.special.module wins over @lib/*.module and @lib/*
+      assert.notStrictEqual(result, null);
+      assert.strictEqual(result?.hasMismatch, true);
+      assert.strictEqual(result?.correctedSpecifier, "@lib/Widget.special.module");
+      assert.strictEqual(result?.matchedPattern, "@lib/*.special.module");
+      assert.strictEqual(
+        result?.actualDiskPath,
+        "/project/src/special/Widget.special.module"
+      );
+    });
+
+    it("REGRESSION: genuinely missing target with suffix does not produce speculative fix", () => {
+      fs.addFile(
+        "/project/tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "@lib/*.module": ["src/*.module"],
+            },
+          },
+        })
+      );
+
+      const aliasConfig = loadAliasConfig("/project/tsconfig.json", fs);
+      const result = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@lib/nonexistent.module",
+        fs,
+        cache,
+        aliasConfig
+      );
+
+      // Genuinely missing file produces null (zero speculative fixes)
+      assert.strictEqual(result, null);
+    });
+
+    it("REGRESSION: preserves original alias prefix and fixed suffix in corrected import with intermediate dirs and different target suffix", () => {
+      // Intermediate directory: @ui/components/header.module -> @ui/components/Header.module
+      fs.addFile(
+        "/project/src/components/Header.module.tsx",
+        "export const Header = 1;"
+      );
+      // Different target suffix: @styles/*.css -> src/theme/*.module.css
+      fs.addFile(
+        "/project/src/theme/Button.module.css",
+        ".btn { color: red; }"
+      );
+      fs.addFile(
+        "/project/tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "@ui/*.module": ["src/*.module"],
+              "@styles/*.css": ["src/theme/*.module.css"],
+            },
+          },
+        })
+      );
+
+      const aliasConfig = loadAliasConfig("/project/tsconfig.json", fs);
+
+      // Test 1: Intermediate directory with suffix
+      const res1 = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@ui/components/header.module",
+        fs,
+        cache,
+        aliasConfig
+      );
+      assert.notStrictEqual(res1, null);
+      assert.strictEqual(res1?.hasMismatch, true);
+      assert.strictEqual(res1?.correctedSpecifier, "@ui/components/Header.module");
+      assert.strictEqual(res1?.matchedPattern, "@ui/*.module");
+
+      // Test 2: Different target suffix: prefix @styles/ and suffix .css preserved
+      const res2 = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@styles/button.css",
+        fs,
+        cache,
+        aliasConfig
+      );
+      assert.notStrictEqual(res2, null);
+      assert.strictEqual(res2?.hasMismatch, true);
+      assert.strictEqual(res2?.correctedSpecifier, "@styles/Button.css");
+      assert.strictEqual(res2?.matchedPattern, "@styles/*.css");
+    });
+
+    it("REGRESSION: ordered fallback targets and strict winning pattern hold for suffix patterns", () => {
+      // Target 1 missing, Target 2 resolves
+      fs.addDirectory("/project/custom-ui");
+      fs.addFile(
+        "/project/common-ui/Button.module.tsx",
+        "export const Button = 1;"
+      );
+      fs.addFile(
+        "/project/tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "@ui/*.module": ["custom-ui/*.module", "common-ui/*.module"],
+              "@ui/*": ["common-ui/*"],
+            },
+          },
+        })
+      );
+
+      const aliasConfig = loadAliasConfig("/project/tsconfig.json", fs);
+
+      // 1. Fallback to target 2 within winning mapping succeeds
+      const res1 = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@ui/button.module",
+        fs,
+        cache,
+        aliasConfig
+      );
+      assert.notStrictEqual(res1, null);
+      assert.strictEqual(res1?.hasMismatch, true);
+      assert.strictEqual(res1?.correctedSpecifier, "@ui/Button.module");
+      assert.strictEqual(res1?.matchedPattern, "@ui/*.module");
+
+      // 2. Strict winning pattern: if more specific pattern has no resolvable targets, do NOT fall back to @ui/*
+      fs.addFile(
+        "/project/tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "@ui/*.module": ["nonexistent/*.module"],
+              "@ui/*": ["common-ui/*"],
+            },
+          },
+        })
+      );
+      const aliasConfig2 = loadAliasConfig("/project/tsconfig.json", fs);
+      const res2 = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@ui/button.module",
+        fs,
+        cache,
+        aliasConfig2
+      );
+      assert.strictEqual(res2, null);
+    });
+
+    it("REGRESSION: target suffixes with directory separators are skipped conservatively", () => {
+      fs.addFile("/project/src/auth/index.ts", "export const auth = 1;");
+      fs.addFile(
+        "/project/tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              "@mod/*": ["src/*/index"],
+            },
+          },
+        })
+      );
+
+      const aliasConfig = loadAliasConfig("/project/tsconfig.json", fs);
+      const result = resolveAndValidateImport(
+        "/project/src/index.ts",
+        "@mod/Auth",
+        fs,
+        cache,
+        aliasConfig
+      );
+
+      // Skipped conservatively to avoid speculative guessing
+      assert.strictEqual(result, null);
+    });
+
     it("skips uncertain cases when alias config is marked incomplete", () => {
       fs.addFile("/project/src/Components/Button.tsx", "export const Button = 1;");
       fs.addFile(

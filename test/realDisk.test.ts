@@ -33,6 +33,7 @@ describe('Real Disk Filesystem Tests (Linux Real I/O)', () => {
     fs.mkdirSync(utilsDir, { recursive: true });
 
     fs.writeFileSync(path.join(compDir, 'Button.tsx'), 'export const Button = () => null;');
+    fs.writeFileSync(path.join(compDir, 'Modal.module.tsx'), 'export const Modal = 1;');
     fs.writeFileSync(path.join(utilsDir, 'index.ts'), 'export const util = 1;');
     fs.writeFileSync(path.join(srcDir, 'index.ts'), 'import "./Components/Button";');
     fs.writeFileSync(
@@ -42,6 +43,7 @@ describe('Real Disk Filesystem Tests (Linux Real I/O)', () => {
           baseUrl: './src',
           paths: {
             '@/*': ['*'],
+            '@lib/*.module': ['Components/*.module'],
           },
         },
       })
@@ -139,6 +141,54 @@ describe('Real Disk Filesystem Tests (Linux Real I/O)', () => {
       isIncomplete: false,
     };
     const res = resolveAndValidateImport(importer, '@/Components/Button', nodeFs, cache, config);
+    assert.strictEqual(res, null);
+  });
+
+  it('9. real disk: alias with suffix casing mismatch detected', () => {
+    const importer = path.join(tempDir, 'src', 'index.ts');
+    const config = {
+      configFilePath: path.join(tempDir, 'tsconfig.json'),
+      configDir: tempDir,
+      baseUrl: './src',
+      mappings: [
+        {
+          pattern: '@lib/*.module',
+          hasWildcard: true,
+          prefix: '@lib/',
+          suffix: '.module',
+          targets: ['Components/*.module'],
+          baseDir: path.join(tempDir, 'src'),
+          configFilePath: path.join(tempDir, 'tsconfig.json'),
+        },
+      ],
+      isIncomplete: false,
+    };
+    const res = resolveAndValidateImport(importer, '@lib/modal.module', nodeFs, cache, config);
+    assert.notStrictEqual(res, null);
+    assert.strictEqual(res?.hasMismatch, true);
+    assert.strictEqual(res?.correctedSpecifier, '@lib/Modal.module');
+  });
+
+  it('10. real disk: alias with suffix exact match has no diagnostic', () => {
+    const importer = path.join(tempDir, 'src', 'index.ts');
+    const config = {
+      configFilePath: path.join(tempDir, 'tsconfig.json'),
+      configDir: tempDir,
+      baseUrl: './src',
+      mappings: [
+        {
+          pattern: '@lib/*.module',
+          hasWildcard: true,
+          prefix: '@lib/',
+          suffix: '.module',
+          targets: ['Components/*.module'],
+          baseDir: path.join(tempDir, 'src'),
+          configFilePath: path.join(tempDir, 'tsconfig.json'),
+        },
+      ],
+      isIncomplete: false,
+    };
+    const res = resolveAndValidateImport(importer, '@lib/Modal.module', nodeFs, cache, config);
     assert.strictEqual(res, null);
   });
 });

@@ -152,7 +152,7 @@ Starting with **v1.1.0**, Import Case Guard detects and safely corrects casing m
 - **Multi-Level `extends` Inheritance**: Correctly inherits mappings across base configurations while resolving targets relative to the directory where each mapping originated.
 - **Configuration Invalidation**: Watches `tsconfig.json` and `jsconfig.json` for live changes, invalidating configuration caches and rescanning affected files automatically.
 - **Deterministic Coexistence**: TypeScript files (`.ts`, `.tsx`) only resolve configurations from `tsconfig.json`. JavaScript files (`.js`, `.jsx`) check `tsconfig.json` first, then fall back to `jsconfig.json`.
-- **Fail-Safe Incomplete Config Guard**: If an `extends` configuration is missing, malformed, circular, or unsupported, uncertain mappings are safely skipped to guarantee zero false positives.
+- **Fail-Safe Incomplete Config Guard**: If an `extends` configuration is missing, malformed, circular, or unsupported, uncertain mappings are skipped conservatively to reduce false-positive diagnostics.
 
 ---
 
@@ -246,6 +246,7 @@ The `Ctrl+.` Quick Fix menu is the primary remediation interface. For users who 
 - **No Custom Bundler Resolution**: Does not emulate custom Webpack, Vite, or framework-specific resolver plugins (such as custom extension aliases or dynamic runtime plugins).
 - **Ambiguous Matches**: When multiple files exist differing only by case (or multiple candidates share the same base name), Import Case Guard flags the ambiguity and suppresses Quick Fix to avoid guessing wrong.
 - **Static Analysis Only**: Dynamic path concatenation or runtime variable imports cannot be resolved.
+- **Wildcard Suffix Patterns with Directory Separators**: Suffix patterns following an asterisk in path mapping targets or keys that contain directory separators (such as `*/sub/dir`) are skipped conservatively to prevent speculative resolution. Standard suffix patterns (such as `@lib/*.module` -> `src/*.module`) are fully supported.
 
 ---
 

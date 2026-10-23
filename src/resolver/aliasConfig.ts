@@ -52,6 +52,15 @@ export function parsePattern(pattern: string): { prefix: string; suffix: string;
       hasWildcard: false,
     };
   }
+  const lastStarIdx = pattern.lastIndexOf('*');
+  if (starIdx !== lastStarIdx) {
+    // TypeScript paths allow at most one asterisk per pattern
+    return {
+      prefix: pattern,
+      suffix: '',
+      hasWildcard: false,
+    };
+  }
   return {
     prefix: pattern.slice(0, starIdx),
     suffix: pattern.slice(starIdx + 1),

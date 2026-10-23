@@ -413,6 +413,10 @@ function resolveAliasImport(
     return null;
   }
 
+  if (mapping.suffix && (mapping.suffix.includes('/') || mapping.suffix.includes('\\'))) {
+    return null;
+  }
+
   const wildcardValue = specifier.slice(
     mapping.prefix.length,
     specifier.length - (mapping.suffix ? mapping.suffix.length : 0)
@@ -435,11 +439,18 @@ function resolveAliasImport(
     // Iterate through ordered fallback targets
     for (const target of mapping.targets) {
       const starIdx = target.indexOf('*');
-      let targetPrefix = '';
-      if (starIdx !== -1) {
-        targetPrefix = target.slice(0, starIdx);
-      } else {
-        targetPrefix = target;
+      if (starIdx === -1) {
+        continue;
+      }
+      if (target.indexOf('*') !== target.lastIndexOf('*')) {
+        continue;
+      }
+
+      const targetPrefix = target.slice(0, starIdx);
+      const targetSuffix = target.slice(starIdx + 1);
+
+      if (targetSuffix.includes('/') || targetSuffix.includes('\\')) {
+        continue;
       }
 
       let currentDir = path.resolve(mapping.baseDir, targetPrefix);
@@ -501,12 +512,25 @@ function resolveAliasImport(
       const lastSeg = rawSegments[rawSegments.length - 1];
       const entries = cache.getEntries(currentDir, fs);
 
+      const expectedTargetBase = lastSeg + targetSuffix;
+      const expectedTargetBaseLower = expectedTargetBase.toLowerCase();
+
       // Check exact direct file
-      const exactDirectFile = entries.find((e) => e.name === lastSeg && e.isFile());
+      const exactDirectFile = entries.find((e) => e.name === expectedTargetBase && e.isFile());
       if (exactDirectFile) {
         correctedSegments.push(lastSeg);
         if (mismatchFound) {
-          return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+          return buildAliasResult(
+            mapping,
+            separator,
+            correctedSegments,
+            hasTrailingSlash,
+            specifier,
+            currentDir,
+            mismatchDetails,
+            isAmbiguous,
+            targetSuffix
+          );
         }
         return null; // exact match across path
       }
@@ -514,7 +538,7 @@ function resolveAliasImport(
       // Check exact extensionless file
       let exactExtMatch: DirectoryEntry | null = null;
       for (const ext of SUPPORTED_SOURCE_EXTENSIONS) {
-        const candidate = entries.find((e) => e.name === lastSeg + ext && e.isFile());
+        const candidate = entries.find((e) => e.name === expectedTargetBase + ext && e.isFile());
         if (candidate) {
           exactExtMatch = candidate;
           break;
@@ -523,104 +547,148 @@ function resolveAliasImport(
       if (exactExtMatch) {
         correctedSegments.push(lastSeg);
         if (mismatchFound) {
-          return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+          return buildAliasResult(
+            mapping,
+            separator,
+            correctedSegments,
+            hasTrailingSlash,
+            specifier,
+            currentDir,
+            mismatchDetails,
+            isAmbiguous,
+            targetSuffix
+          );
         }
         return null; // exact match
       }
 
       // Check exact directory with index file
-      const exactDir = entries.find((e) => e.name === lastSeg && e.isDirectory());
+      const exactDir = entries.find((e) => e.name === expectedTargetBase && e.isDirectory());
       if (exactDir) {
         const subEntries = cache.getEntries(path.join(currentDir, exactDir.name), fs);
         const hasIndex = subEntries.some((e) => INDEX_FILES.includes(e.name));
         if (hasIndex) {
           correctedSegments.push(lastSeg);
           if (mismatchFound) {
-            return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+            return buildAliasResult(
+              mapping,
+              separator,
+              correctedSegments,
+              hasTrailingSlash,
+              specifier,
+              currentDir,
+              mismatchDetails,
+              isAmbiguous,
+              targetSuffix
+            );
           }
           return null; // exact match
         }
       }
 
       // No exact match: check case-insensitive candidates on the final segment
-      const lastSegLower = lastSeg.toLowerCase();
-
-      // Case-mismatched file with explicit extension or full match
-      const caseDirectFiles = entries.filter(
-        (e) => e.name.toLowerCase() === lastSegLower && e.isFile()
-      );
-
-      // Case-mismatched extensionless file
-      interface ExtensionlessCandidate {
-        entry: DirectoryEntry;
-        diskBaseName: string;
-        ext: string;
+      interface AliasCandidate {
+        actualStem: string;
+        actualDiskName: string;
+        type: 'direct' | 'extensionless' | 'dir';
       }
-      const caseExtensionlessCandidates: ExtensionlessCandidate[] = [];
+
+      const caseDirectCandidates: AliasCandidate[] = [];
+      const caseExtensionlessCandidates: AliasCandidate[] = [];
+      const caseDirCandidates: AliasCandidate[] = [];
+
       for (const entry of entries) {
-        if (!entry.isFile()) continue;
-        for (const ext of SUPPORTED_SOURCE_EXTENSIONS) {
-          if (entry.name.toLowerCase().endsWith(ext.toLowerCase())) {
-            const base = entry.name.slice(0, entry.name.length - ext.length);
-            if (base.toLowerCase() === lastSegLower) {
-              caseExtensionlessCandidates.push({
-                entry,
-                diskBaseName: base,
-                ext,
+        if (entry.isFile()) {
+          // Direct file check
+          if (entry.name.toLowerCase() === expectedTargetBaseLower) {
+            const actualStem = targetSuffix.length > 0
+              ? entry.name.slice(0, entry.name.length - targetSuffix.length)
+              : entry.name;
+            caseDirectCandidates.push({
+              actualStem,
+              actualDiskName: entry.name,
+              type: 'direct',
+            });
+          }
+
+          // Extensionless file check
+          for (const ext of SUPPORTED_SOURCE_EXTENSIONS) {
+            if (entry.name.toLowerCase().endsWith(ext.toLowerCase())) {
+              const base = entry.name.slice(0, entry.name.length - ext.length);
+              if (base.toLowerCase() === expectedTargetBaseLower) {
+                const actualStem = targetSuffix.length > 0
+                  ? base.slice(0, base.length - targetSuffix.length)
+                  : base;
+                caseExtensionlessCandidates.push({
+                  actualStem,
+                  actualDiskName: entry.name,
+                  type: 'extensionless',
+                });
+                break;
+              }
+            }
+          }
+        } else if (entry.isDirectory()) {
+          // Directory with index check
+          if (entry.name.toLowerCase() === expectedTargetBaseLower) {
+            const subEntries = cache.getEntries(path.join(currentDir, entry.name), fs);
+            if (subEntries.some((e) => INDEX_FILES.includes(e.name))) {
+              const actualStem = targetSuffix.length > 0
+                ? entry.name.slice(0, entry.name.length - targetSuffix.length)
+                : entry.name;
+              caseDirCandidates.push({
+                actualStem,
+                actualDiskName: entry.name,
+                type: 'dir',
               });
             }
           }
         }
       }
 
-      // Case-mismatched directory with index file
-      const caseDirCandidates: DirectoryEntry[] = [];
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        if (entry.name.toLowerCase() === lastSegLower) {
-          const subEntries = cache.getEntries(path.join(currentDir, entry.name), fs);
-          if (subEntries.some((e) => INDEX_FILES.includes(e.name))) {
-            caseDirCandidates.push(entry);
-          }
-        }
-      }
+      const allCandidates = [
+        ...caseDirectCandidates,
+        ...caseExtensionlessCandidates,
+        ...caseDirCandidates,
+      ];
 
-      if (caseDirectFiles.length === 1) {
-        const actual = caseDirectFiles[0].name;
+      if (allCandidates.length === 1) {
+        const cand = allCandidates[0];
         mismatchFound = true;
-        correctedSegments.push(actual);
-        mismatchDetails.push(`File '${lastSeg}' on disk is '${actual}'`);
-        return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+        correctedSegments.push(cand.actualStem);
+        const itemType = cand.type === 'dir' ? 'Directory' : 'File';
+        const displayItem = targetSuffix.length > 0 ? expectedTargetBase : lastSeg;
+        mismatchDetails.push(`${itemType} '${displayItem}' on disk is '${cand.actualDiskName}'`);
+        return buildAliasResult(
+          mapping,
+          separator,
+          correctedSegments,
+          hasTrailingSlash,
+          specifier,
+          currentDir,
+          mismatchDetails,
+          isAmbiguous,
+          targetSuffix
+        );
       }
 
-      if (caseExtensionlessCandidates.length === 1) {
-        const cand = caseExtensionlessCandidates[0];
-        mismatchFound = true;
-        correctedSegments.push(cand.diskBaseName);
-        mismatchDetails.push(`File '${lastSeg}' on disk is '${cand.entry.name}'`);
-        return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
-      }
-
-      if (caseDirCandidates.length === 1) {
-        const actualDir = caseDirCandidates[0].name;
-        mismatchFound = true;
-        correctedSegments.push(actualDir);
-        mismatchDetails.push(`Directory '${lastSeg}' on disk is '${actualDir}'`);
-        return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
-      }
-
-      const totalCandidates = caseDirectFiles.length + caseExtensionlessCandidates.length + caseDirCandidates.length;
-      if (totalCandidates > 1) {
+      if (allCandidates.length > 1) {
         mismatchFound = true;
         isAmbiguous = true;
         mismatchDetails.push(`Multiple files or directories match '${lastSeg}' with different casing.`);
-        const bestName =
-          caseDirectFiles[0]?.name ||
-          caseExtensionlessCandidates[0]?.diskBaseName ||
-          caseDirCandidates[0]?.name ||
-          lastSeg;
-        correctedSegments.push(bestName);
-        return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+        const bestCand = allCandidates[0];
+        correctedSegments.push(bestCand ? bestCand.actualStem : lastSeg);
+        return buildAliasResult(
+          mapping,
+          separator,
+          correctedSegments,
+          hasTrailingSlash,
+          specifier,
+          currentDir,
+          mismatchDetails,
+          isAmbiguous,
+          targetSuffix
+        );
       }
 
       // 0 candidates -> this target does not exist, continue loop to next ordered fallback target
@@ -637,7 +705,8 @@ function buildAliasResult(
   originalSpecifier: string,
   targetDir: string,
   details: string[],
-  isAmbiguous: boolean
+  isAmbiguous: boolean,
+  targetSuffix?: string
 ): CaseMismatchDiagnostic | null {
   const correctedWildcard = correctedSegments.join(separator);
   let correctedSpecifier = mapping.prefix + correctedWildcard + (mapping.suffix || '');
@@ -649,7 +718,9 @@ function buildAliasResult(
     return null;
   }
 
-  const actualDiskPath = path.join(targetDir, correctedSegments[correctedSegments.length - 1] || '');
+  const finalSegment = correctedSegments[correctedSegments.length - 1] || '';
+  const diskSegment = targetSuffix ? finalSegment + targetSuffix : finalSegment;
+  const actualDiskPath = path.join(targetDir, diskSegment);
 
   return {
     hasMismatch: true,
