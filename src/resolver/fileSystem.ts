@@ -11,6 +11,7 @@ export interface IFileSystem {
   readDir(dirPath: string): DirectoryEntry[];
   stat(filePath: string): { isDirectory: boolean; isFile: boolean } | null;
   readFile(filePath: string): string | null;
+  fileExists(filePath: string): boolean;
 }
 
 export class NodeFileSystem implements IFileSystem {
@@ -64,6 +65,15 @@ export class NodeFileSystem implements IFileSystem {
       return fs.readFileSync(filePath, 'utf-8');
     } catch {
       return null;
+    }
+  }
+
+  fileExists(filePath: string): boolean {
+    try {
+      const st = fs.statSync(filePath);
+      return st.isFile();
+    } catch {
+      return false;
     }
   }
 }
@@ -237,6 +247,11 @@ export class MockFileSystem implements IFileSystem {
       return null;
     }
     return info.content ?? '';
+  }
+
+  fileExists(filePath: string): boolean {
+    const st = this.stat(filePath);
+    return st !== null && st.isFile;
   }
 
   private history: Map<string, { isDir: boolean; content?: string }>[] = [];

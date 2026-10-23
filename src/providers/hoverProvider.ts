@@ -31,6 +31,9 @@ export class ImportCaseHoverProvider implements vscode.HoverProvider {
       );
     } else {
       md.appendMarkdown(`- **Requested import**: \`${diagnostic.originalSpecifier}\`\n`);
+      if (diagnostic.matchedPattern) {
+        md.appendMarkdown(`- **Alias pattern**: \`${diagnostic.matchedPattern}\`\n`);
+      }
       if (diagnostic.correctedSpecifier) {
         md.appendMarkdown(`- **Corrected import**: \`${diagnostic.correctedSpecifier}\`\n`);
       }

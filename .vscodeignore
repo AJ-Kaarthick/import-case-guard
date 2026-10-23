@@ -12,4 +12,5 @@ package-lock.json
 node_modules/**
 coverage/**
 .env*
+scripts/**
 *.vsix

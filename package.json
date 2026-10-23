@@ -2,7 +2,7 @@
   "name": "import-case-guard",
   "displayName": "Import Case Guard",
   "description": "Catches local relative import-path casing mistakes that work on case-insensitive filesystems but fail on Linux CI/build systems.",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "icon": "media/icon.png",
   "publisher": "ajkaarthick",
   "author": {
@@ -100,13 +100,14 @@
     "dev": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:all",
-    "test:all": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "test:all": "node scripts/setup-test-vscode.mjs && tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",
     "@types/vscode": "^1.75.0",
     "esbuild": "^0.21.0",
+    "jsonc-parser": "^3.3.1",
     "typescript": "^5.4.5"
   }
 }

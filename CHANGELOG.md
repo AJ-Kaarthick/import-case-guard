@@ -2,6 +2,23 @@
 
 All notable changes to the "import-case-guard" extension will be documented in this file.
 
+## [1.1.0] - 2026-10-23
+
+### Added
+- **TypeScript & JavaScript Path Alias Casing Support**:
+  - Validates and safely corrects casing mismatches inside configured `compilerOptions.paths` aliases from `tsconfig.json` and `jsconfig.json`.
+  - Supports both wildcard patterns (`@/*: ["src/*"]`, `@components/*: ["src/components/*"]`) and exact patterns (`@app: ["src/App.tsx"]`).
+  - Strict TypeScript path resolution semantics: exact pattern matches take precedence, followed by longest-prefix and longest-suffix disambiguation.
+  - Ordered fallback targets (`paths: { "@ui/*": ["custom-ui/*", "common-ui/*"] }`): evaluates targets sequentially without treating multiple fallbacks as inherently ambiguous.
+  - Multi-level `extends` inheritance: resolves inherited mappings relative to the originating configuration file's base directory, supporting single and array configurations.
+  - Robust circular and broken `extends` handling: marks uncertain configurations incomplete and skips unverified mappings to prevent false alarms.
+  - Bundled lightweight `jsonc-parser` within the extension bundle (zero runtime dependencies in production) with full support for JSON comments and trailing commas.
+  - Deterministic config resolution: `.ts`/`.tsx` files check only `tsconfig.json`; `.js`/`.jsx` files prefer `tsconfig.json` over `jsconfig.json` when both coexist.
+  - Multi-root and nested configuration support: handles nested `tsconfig.json` overrides across subfolders and multi-root workspaces.
+  - Targeted watcher invalidation: watches `tsconfig.json` and `jsconfig.json` changes to dynamically invalidate the alias configuration cache and trigger targeted rescans.
+  - Preserves configured alias prefixes in diagnostics and Quick Fixes without converting aliased imports into relative paths.
+  - Full remediation integration: alias fixes work seamlessly with `Ctrl+.` / `Cmd+.` Quick Fix, Fix All in Current File, and Fix All in Workspace.
+
 ## [1.0.1] - 2026-10-23
 
 ### Added

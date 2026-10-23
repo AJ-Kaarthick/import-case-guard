@@ -1,6 +1,8 @@
 import * as path from 'path';
 import { DirectoryCache } from './cache';
 import { DirectoryEntry, IFileSystem } from './fileSystem';
+import { isLocalRelativeImport } from '../scanner/importScanner';
+import { AliasConfig, getMatchingMappings, PathMapping } from './aliasConfig';
 
 export const SUPPORTED_SOURCE_EXTENSIONS = [
   '.ts',
@@ -28,6 +30,7 @@ export interface CaseMismatchDiagnostic {
   originalSpecifier: string;
   correctedSpecifier?: string;
   actualDiskPath?: string;
+  matchedPattern?: string;
   message: string;
   details?: string;
 }
@@ -97,8 +100,23 @@ export function resolveAndValidateImport(
   importingFilePath: string,
   specifier: string,
   fs: IFileSystem,
-  cache: DirectoryCache
+  cache: DirectoryCache,
+  aliasConfig?: AliasConfig | null
 ): CaseMismatchDiagnostic | null {
+  if (!isLocalRelativeImport(specifier)) {
+    // Non-relative import: check for path aliases
+    if (!aliasConfig || aliasConfig.isIncomplete) {
+      return null;
+    }
+
+    const matchingMappings = getMatchingMappings(specifier, aliasConfig.mappings);
+    if (matchingMappings.length === 0) {
+      return null; // Package import or unmapped import
+    }
+
+    return resolveAliasImport(importingFilePath, specifier, matchingMappings, fs, cache);
+  }
+
   const parsed = parseRelativeSpecifier(specifier);
   if (!parsed) {
     return null;
@@ -355,6 +373,289 @@ function buildResult(
     originalSpecifier,
     correctedSpecifier: isAmbiguous ? undefined : correctedSpecifier,
     actualDiskPath,
+    message: isAmbiguous
+      ? 'Import path casing does not match the filesystem (ambiguous match on disk).'
+      : 'Import path casing does not match the filesystem.',
+    details: details.join('; '),
+  };
+}
+
+function resolveAliasImport(
+  importingFilePath: string,
+  specifier: string,
+  matchingMappings: PathMapping[],
+  fs: IFileSystem,
+  cache: DirectoryCache
+): CaseMismatchDiagnostic | null {
+  const isWindowsSep = specifier.includes('\\') && !specifier.includes('/');
+  const separator = isWindowsSep ? '\\' : '/';
+  const hasTrailingSlash = specifier.endsWith('/') || specifier.endsWith('\\');
+
+  // Evaluate matching mappings in priority order (exact pattern > longest prefix > longest suffix)
+  for (const mapping of matchingMappings) {
+    if (!mapping.hasWildcard) {
+      if (specifier !== mapping.pattern) {
+        continue;
+      }
+      for (const target of mapping.targets) {
+        const targetPath = path.resolve(mapping.baseDir, target);
+        if (fs.fileExists(targetPath)) {
+          return null; // exact match on disk
+        }
+        const st = fs.stat(targetPath);
+        if (st && st.isDirectory) {
+          return null;
+        }
+      }
+      continue;
+    }
+
+    const wildcardValue = specifier.slice(
+      mapping.prefix.length,
+      specifier.length - (mapping.suffix ? mapping.suffix.length : 0)
+    );
+    const rawSegments = wildcardValue.split(/[/\\]/).filter((s) => s.length > 0);
+
+    if (rawSegments.length === 0) {
+      for (const target of mapping.targets) {
+        const starIdx = target.indexOf('*');
+        const targetPrefix = starIdx !== -1 ? target.slice(0, starIdx) : target;
+        const targetDir = path.resolve(mapping.baseDir, targetPrefix);
+        const entries = cache.getEntries(targetDir, fs);
+        if (entries.some((e) => INDEX_FILES.includes(e.name))) {
+          return null;
+        }
+      }
+      continue;
+    }
+
+    // Iterate through ordered fallback targets
+    for (const target of mapping.targets) {
+      const starIdx = target.indexOf('*');
+      let targetPrefix = '';
+      if (starIdx !== -1) {
+        targetPrefix = target.slice(0, starIdx);
+      } else {
+        targetPrefix = target;
+      }
+
+      let currentDir = path.resolve(mapping.baseDir, targetPrefix);
+
+      const baseStat = fs.stat(currentDir);
+      if (!baseStat || !baseStat.isDirectory) {
+        continue;
+      }
+
+      const correctedSegments: string[] = [];
+      let mismatchFound = false;
+      let isAmbiguous = false;
+      const mismatchDetails: string[] = [];
+      let targetValid = true;
+
+      // 1. Process intermediate directory segments
+      for (let i = 0; i < rawSegments.length - 1; i++) {
+        const seg = rawSegments[i];
+        const entries = cache.getEntries(currentDir, fs);
+
+        const exactMatch = entries.find((e) => e.name === seg && e.isDirectory());
+        if (exactMatch) {
+          correctedSegments.push(seg);
+          currentDir = path.join(currentDir, seg);
+          continue;
+        }
+
+        const segLower = seg.toLowerCase();
+        const caseMatches = entries.filter(
+          (e) => e.name.toLowerCase() === segLower && e.isDirectory()
+        );
+
+        if (caseMatches.length === 0) {
+          targetValid = false;
+          break;
+        }
+
+        if (caseMatches.length > 1) {
+          isAmbiguous = true;
+          mismatchFound = true;
+          correctedSegments.push(caseMatches[0].name);
+          mismatchDetails.push(`Directory segment '${seg}' has multiple ambiguous matches on disk.`);
+          currentDir = path.join(currentDir, caseMatches[0].name);
+          continue;
+        }
+
+        const actualDirName = caseMatches[0].name;
+        mismatchFound = true;
+        correctedSegments.push(actualDirName);
+        mismatchDetails.push(`Directory segment '${seg}' on disk is '${actualDirName}'`);
+        currentDir = path.join(currentDir, actualDirName);
+      }
+
+      if (!targetValid) {
+        continue;
+      }
+
+      // 2. Process final segment
+      const lastSeg = rawSegments[rawSegments.length - 1];
+      const entries = cache.getEntries(currentDir, fs);
+
+      // Check exact direct file
+      const exactDirectFile = entries.find((e) => e.name === lastSeg && e.isFile());
+      if (exactDirectFile) {
+        correctedSegments.push(lastSeg);
+        if (mismatchFound) {
+          return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+        }
+        return null; // exact match across path
+      }
+
+      // Check exact extensionless file
+      let exactExtMatch: DirectoryEntry | null = null;
+      for (const ext of SUPPORTED_SOURCE_EXTENSIONS) {
+        const candidate = entries.find((e) => e.name === lastSeg + ext && e.isFile());
+        if (candidate) {
+          exactExtMatch = candidate;
+          break;
+        }
+      }
+      if (exactExtMatch) {
+        correctedSegments.push(lastSeg);
+        if (mismatchFound) {
+          return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+        }
+        return null; // exact match
+      }
+
+      // Check exact directory with index file
+      const exactDir = entries.find((e) => e.name === lastSeg && e.isDirectory());
+      if (exactDir) {
+        const subEntries = cache.getEntries(path.join(currentDir, exactDir.name), fs);
+        const hasIndex = subEntries.some((e) => INDEX_FILES.includes(e.name));
+        if (hasIndex) {
+          correctedSegments.push(lastSeg);
+          if (mismatchFound) {
+            return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+          }
+          return null; // exact match
+        }
+      }
+
+      // No exact match: check case-insensitive candidates on the final segment
+      const lastSegLower = lastSeg.toLowerCase();
+
+      // Case-mismatched file with explicit extension or full match
+      const caseDirectFiles = entries.filter(
+        (e) => e.name.toLowerCase() === lastSegLower && e.isFile()
+      );
+
+      // Case-mismatched extensionless file
+      interface ExtensionlessCandidate {
+        entry: DirectoryEntry;
+        diskBaseName: string;
+        ext: string;
+      }
+      const caseExtensionlessCandidates: ExtensionlessCandidate[] = [];
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        for (const ext of SUPPORTED_SOURCE_EXTENSIONS) {
+          if (entry.name.toLowerCase().endsWith(ext.toLowerCase())) {
+            const base = entry.name.slice(0, entry.name.length - ext.length);
+            if (base.toLowerCase() === lastSegLower) {
+              caseExtensionlessCandidates.push({
+                entry,
+                diskBaseName: base,
+                ext,
+              });
+            }
+          }
+        }
+      }
+
+      // Case-mismatched directory with index file
+      const caseDirCandidates: DirectoryEntry[] = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.toLowerCase() === lastSegLower) {
+          const subEntries = cache.getEntries(path.join(currentDir, entry.name), fs);
+          if (subEntries.some((e) => INDEX_FILES.includes(e.name))) {
+            caseDirCandidates.push(entry);
+          }
+        }
+      }
+
+      if (caseDirectFiles.length === 1) {
+        const actual = caseDirectFiles[0].name;
+        mismatchFound = true;
+        correctedSegments.push(actual);
+        mismatchDetails.push(`File '${lastSeg}' on disk is '${actual}'`);
+        return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+      }
+
+      if (caseExtensionlessCandidates.length === 1) {
+        const cand = caseExtensionlessCandidates[0];
+        mismatchFound = true;
+        correctedSegments.push(cand.diskBaseName);
+        mismatchDetails.push(`File '${lastSeg}' on disk is '${cand.entry.name}'`);
+        return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+      }
+
+      if (caseDirCandidates.length === 1) {
+        const actualDir = caseDirCandidates[0].name;
+        mismatchFound = true;
+        correctedSegments.push(actualDir);
+        mismatchDetails.push(`Directory '${lastSeg}' on disk is '${actualDir}'`);
+        return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+      }
+
+      const totalCandidates = caseDirectFiles.length + caseExtensionlessCandidates.length + caseDirCandidates.length;
+      if (totalCandidates > 1) {
+        mismatchFound = true;
+        isAmbiguous = true;
+        mismatchDetails.push(`Multiple files or directories match '${lastSeg}' with different casing.`);
+        const bestName =
+          caseDirectFiles[0]?.name ||
+          caseExtensionlessCandidates[0]?.diskBaseName ||
+          caseDirCandidates[0]?.name ||
+          lastSeg;
+        correctedSegments.push(bestName);
+        return buildAliasResult(mapping, separator, correctedSegments, hasTrailingSlash, specifier, currentDir, mismatchDetails, isAmbiguous);
+      }
+
+      // 0 candidates -> this target does not exist, continue loop to next ordered fallback target
+    }
+  }
+
+  return null;
+}
+
+function buildAliasResult(
+  mapping: PathMapping,
+  separator: string,
+  correctedSegments: string[],
+  hasTrailingSlash: boolean,
+  originalSpecifier: string,
+  targetDir: string,
+  details: string[],
+  isAmbiguous: boolean
+): CaseMismatchDiagnostic | null {
+  const correctedWildcard = correctedSegments.join(separator);
+  let correctedSpecifier = mapping.prefix + correctedWildcard + (mapping.suffix || '');
+  if (hasTrailingSlash && !correctedSpecifier.endsWith(separator)) {
+    correctedSpecifier += separator;
+  }
+
+  if (correctedSpecifier === originalSpecifier) {
+    return null;
+  }
+
+  const actualDiskPath = path.join(targetDir, correctedSegments[correctedSegments.length - 1] || '');
+
+  return {
+    hasMismatch: true,
+    isAmbiguous,
+    originalSpecifier,
+    correctedSpecifier: isAmbiguous ? undefined : correctedSpecifier,
+    actualDiskPath,
+    matchedPattern: mapping.pattern,
     message: isAmbiguous
       ? 'Import path casing does not match the filesystem (ambiguous match on disk).'
       : 'Import path casing does not match the filesystem.',

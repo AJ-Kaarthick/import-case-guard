@@ -35,6 +35,17 @@ describe('Real Disk Filesystem Tests (Linux Real I/O)', () => {
     fs.writeFileSync(path.join(compDir, 'Button.tsx'), 'export const Button = () => null;');
     fs.writeFileSync(path.join(utilsDir, 'index.ts'), 'export const util = 1;');
     fs.writeFileSync(path.join(srcDir, 'index.ts'), 'import "./Components/Button";');
+    fs.writeFileSync(
+      path.join(tempDir, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: {
+          baseUrl: './src',
+          paths: {
+            '@/*': ['*'],
+          },
+        },
+      })
+    );
   });
 
   after(() => {
@@ -80,6 +91,54 @@ describe('Real Disk Filesystem Tests (Linux Real I/O)', () => {
   it('6. real disk: missing file has no diagnostic', () => {
     const importer = path.join(tempDir, 'src', 'index.ts');
     const res = resolveAndValidateImport(importer, './Components/NonExistent', nodeFs, cache);
+    assert.strictEqual(res, null);
+  });
+
+  it('7. real disk: alias wrong file casing detected', () => {
+    const importer = path.join(tempDir, 'src', 'index.ts');
+    const config = {
+      configFilePath: path.join(tempDir, 'tsconfig.json'),
+      configDir: tempDir,
+      baseUrl: './src',
+      mappings: [
+        {
+          pattern: '@/*',
+          hasWildcard: true,
+          prefix: '@/',
+          suffix: '',
+          targets: ['*'],
+          baseDir: path.join(tempDir, 'src'),
+          configFilePath: path.join(tempDir, 'tsconfig.json'),
+        },
+      ],
+      isIncomplete: false,
+    };
+    const res = resolveAndValidateImport(importer, '@/components/button', nodeFs, cache, config);
+    assert.notStrictEqual(res, null);
+    assert.strictEqual(res?.hasMismatch, true);
+    assert.strictEqual(res?.correctedSpecifier, '@/Components/Button');
+  });
+
+  it('8. real disk: alias exact match has no diagnostic', () => {
+    const importer = path.join(tempDir, 'src', 'index.ts');
+    const config = {
+      configFilePath: path.join(tempDir, 'tsconfig.json'),
+      configDir: tempDir,
+      baseUrl: './src',
+      mappings: [
+        {
+          pattern: '@/*',
+          hasWildcard: true,
+          prefix: '@/',
+          suffix: '',
+          targets: ['*'],
+          baseDir: path.join(tempDir, 'src'),
+          configFilePath: path.join(tempDir, 'tsconfig.json'),
+        },
+      ],
+      isIncomplete: false,
+    };
+    const res = resolveAndValidateImport(importer, '@/Components/Button', nodeFs, cache, config);
     assert.strictEqual(res, null);
   });
 });

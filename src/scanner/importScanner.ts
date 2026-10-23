@@ -23,14 +23,23 @@ export function isLocalRelativeImport(specifier: string): boolean {
 export const MAX_FILE_SIZE_BYTES = 1024 * 1024; // 1 MB
 export const MAX_FILE_LINES = 50000;
 
+export interface ScanOptions {
+  /** If true, returns all static import specifiers (including non-relative / aliased). */
+  includeNonRelative?: boolean;
+}
+
 /**
- * Scans JavaScript / TypeScript source code to detect all local relative imports.
- * Ignores package imports, alias imports, comments, unrelated strings, and non-static expressions.
+ * Scans JavaScript / TypeScript source code to detect import specifiers.
+ * By default returns local relative imports. Set options.includeNonRelative to true
+ * to also include candidate alias imports.
+ * Ignores comments, unrelated strings, and non-static expressions.
  */
-export function scanImports(source: string): ImportSpecifier[] {
+export function scanImports(source: string, options?: ScanOptions): ImportSpecifier[] {
   if (!source || source.length > MAX_FILE_SIZE_BYTES) {
     return [];
   }
+
+  const includeNonRelative = options?.includeNonRelative ?? false;
 
   const tokens = tokenize(source);
   const imports: ImportSpecifier[] = [];
@@ -54,7 +63,7 @@ export function scanImports(source: string): ImportSpecifier[] {
           // Verify it's followed by ')' or ',' (e.g. import('./foo') or import('./foo', { with: ... }))
           const afterStr = tokens[i + 3];
           if (afterStr && (afterStr.value === ')' || afterStr.value === ',')) {
-            addIfRelative(imports, next, 'dynamic-import');
+            addIfRelative(imports, next, 'dynamic-import', includeNonRelative);
           }
         }
         continue;
@@ -62,7 +71,7 @@ export function scanImports(source: string): ImportSpecifier[] {
 
       // Check for side-effect import: import '...'
       if (i + 1 < len && isStaticStringToken(tokens[i + 1])) {
-        addIfRelative(imports, tokens[i + 1], 'side-effect');
+        addIfRelative(imports, tokens[i + 1], 'side-effect', includeNonRelative);
         i++; // advance past string
         continue;
       }
@@ -100,7 +109,7 @@ export function scanImports(source: string): ImportSpecifier[] {
             const isType = tokens.slice(i, searchIdx).some(
               (tok) => tok.type === TokenType.KEYWORD && tok.value === 'type'
             );
-            addIfRelative(imports, strToken, isType ? 'type-import' : 'static-import');
+            addIfRelative(imports, strToken, isType ? 'type-import' : 'static-import', includeNonRelative);
             i = searchIdx + 1;
           }
           break;
@@ -140,7 +149,7 @@ export function scanImports(source: string): ImportSpecifier[] {
         if (exportBraceDepth === 0 && t.type === TokenType.KEYWORD && t.value === 'from') {
           const strToken = tokens[searchIdx + 1];
           if (strToken && isStaticStringToken(strToken)) {
-            addIfRelative(imports, strToken, 'export-from');
+            addIfRelative(imports, strToken, 'export-from', includeNonRelative);
             i = searchIdx + 1;
           }
           break;
@@ -165,7 +174,7 @@ export function scanImports(source: string): ImportSpecifier[] {
         if (argToken && isStaticStringToken(argToken)) {
           const closing = tokens[i + 3];
           if (closing && (closing.value === ')' || closing.value === ',')) {
-            addIfRelative(imports, argToken, 'require');
+            addIfRelative(imports, argToken, 'require', includeNonRelative);
           }
         }
       }
@@ -180,9 +189,9 @@ function isStaticStringToken(token: Token): boolean {
   return token.type === TokenType.STRING || token.type === TokenType.TEMPLATE_STATIC;
 }
 
-function addIfRelative(list: ImportSpecifier[], token: Token, kind: ImportKind) {
+function addIfRelative(list: ImportSpecifier[], token: Token, kind: ImportKind, includeNonRelative = false) {
   const specifier = token.value;
-  if (!isLocalRelativeImport(specifier)) {
+  if (!includeNonRelative && !isLocalRelativeImport(specifier)) {
     return;
   }
 

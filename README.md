@@ -1,6 +1,6 @@
 # Import Case Guard
 
-**Import Case Guard** is a lightweight, local-only VS Code extension that catches local relative import-path casing mistakes that may work on case-insensitive filesystems (such as macOS and Windows) but fail on case-sensitive environments such as Linux servers, Docker containers, and CI/CD build runners.
+**Import Case Guard** is a lightweight, local-only VS Code extension that catches local relative import-path and configured path alias casing mistakes that may work on case-insensitive filesystems (such as macOS and Windows) but fail on case-sensitive environments such as Linux servers, Docker containers, and CI/CD build runners.
 
 ---
 
@@ -33,7 +33,7 @@ Module not found: Can't resolve './components/button' in '/project/src'
 
 ## Primary Workflow
 
-1. **Automatic Detection**: When you open files or a workspace, Import Case Guard automatically scans relative import paths in the background.
+1. **Automatic Detection**: When you open files or a workspace, Import Case Guard automatically scans relative import paths and configured alias paths in the background.
 2. **Contextual Diagnostics**: Native warning squiggles highlight any import specifier where casing differs from actual filesystem entries. Hovering over a warning explains the discrepancy.
 3. **`Ctrl+.` / `Cmd+.` Quick Fix (Primary Action)**: Place your cursor on the warning and press `Ctrl+.` (Windows/Linux) or `Cmd+.` (macOS) to access scoped fixes:
    - **`Correct import casing to '...'`** (*Fix this import*): Replaces only the selected import specifier with the exact filesystem casing.
@@ -45,6 +45,7 @@ Module not found: Can't resolve './components/button' in '/project/src'
 
 ## Features
 
+- **TypeScript & JavaScript Path Alias Casing Support**: Validates and corrects casing mismatches inside `compilerOptions.paths` aliases from `tsconfig.json` and `jsconfig.json` (such as `@/components/button` -> `@/components/Button`), preserving your configured alias prefix without converting to relative paths.
 - **Contextual Diagnostics**: Native VS Code warnings highlight only import specifiers whose path casing differs from the actual filesystem entries.
 - **Detailed Explanations on Hover**: Hovering over the diagnostic explains the requested path, the actual filesystem path, and why cross-platform builds fail.
 - **Accurate Quick Fix (`Ctrl+.` or `Cmd+.`)**: Replaces only the import specifier with the exact filesystem casing, preserving quote styles (`'`, `"`, and `` ` ``), formatting, and surrounding code.
@@ -114,13 +115,44 @@ Import Case Guard analyzes local relative imports (`./` or `../`):
 
 ### What Is Ignored (By Design)
 
-To avoid noise and stay focused on relative path casing:
+To avoid noise and stay focused on local casing issues:
 
 - **Package imports**: `react`, `lodash`, `node:path`, `@scope/package` are ignored.
-- **Alias imports**: `@/components/Button`, `~/utils` are ignored in v1.
+- **Unmapped non-relative imports**: Specifiers that do not start with `./` or `../` and do not match any configured alias paths in your `tsconfig.json` or `jsconfig.json` are ignored.
 - **Dynamic expressions**: Expressions with runtime variables (`require(someVar)`, `import(getPath())`) and template literals with interpolation (such as `` `import(`./components/${name}`)` ``) are not statically analyzable and are ignored.
 - **Comments & Strings**: Text inside comments (`// ...`, `/* ... */`), regular expressions (e.g., `/\/*$/`), or arbitrary string variables (`const msg = "import ...";`) are completely ignored.
 - **Nonexistent paths**: If a file does not exist on disk, Import Case Guard does not flag it. It only flags paths that exist on disk with differing casing.
+
+---
+
+## TypeScript & JavaScript Path Alias Support
+
+Starting with **v1.1.0**, Import Case Guard detects and safely corrects casing mismatches inside aliased imports configured via `compilerOptions.paths` in `tsconfig.json` or `jsconfig.json`.
+
+```json
+{
+  "compilerOptions": {
+    "baseUrl": "./",
+    "paths": {
+      "@/*": ["src/*"],
+      "@components/*": ["src/components/*"],
+      "@app": ["src/App.tsx"],
+      "@ui/*": ["custom-ui/*", "common-ui/*"]
+    }
+  }
+}
+```
+
+### Path Alias Capabilities
+
+- **Wildcard and Exact Aliases**: Fully resolves wildcard aliases (`@/*`, `~/*`) and exact mapping keys (`@app`).
+- **Preserved Alias Prefix**: Fixes only the mismatched casing inside the path while strictly preserving your alias prefix (e.g., `@/components/button` -> `@/components/Button`). It **never** converts aliased imports into relative paths.
+- **TypeScript Specificity Priority**: Exact pattern matches take precedence, followed by longest-prefix and longest-suffix pattern matching.
+- **Ordered Fallback Targets**: When a mapping specifies multiple target paths (`["custom-ui/*", "common-ui/*"]`), fallback targets are evaluated sequentially without being treated as ambiguous.
+- **Multi-Level `extends` Inheritance**: Correctly inherits mappings across base configurations while resolving targets relative to the directory where each mapping originated.
+- **Configuration Invalidation**: Watches `tsconfig.json` and `jsconfig.json` for live changes, invalidating configuration caches and rescanning affected files automatically.
+- **Deterministic Coexistence**: TypeScript files (`.ts`, `.tsx`) only resolve configurations from `tsconfig.json`. JavaScript files (`.js`, `.jsx`) check `tsconfig.json` first, then fall back to `jsconfig.json`.
+- **Fail-Safe Incomplete Config Guard**: If an `extends` configuration is missing, malformed, circular, or unsupported, uncertain mappings are safely skipped to guarantee zero false positives.
 
 ---
 
@@ -130,10 +162,10 @@ When a mismatch is identified:
 
 ```ts
 // Before Quick Fix:
-import Button from "./components/button";
+import Button from "@/components/button";
 
 // After Quick Fix:
-import Button from "./components/Button";
+import Button from "@/components/Button";
 ```
 
 ![Import Case Guard Quick Fix Preview](media/quick-fix-preview.png)
@@ -211,8 +243,7 @@ The `Ctrl+.` Quick Fix menu is the primary remediation interface. For users who 
 
 ## Limitations
 
-- **No Custom Bundler Resolution**: Does not emulate custom Webpack, Vite, or framework-specific resolver plugins (such as custom extension aliases or path mapping).
-- **No Path Aliases**: Only relative paths (`./` and `../`) are analyzed. TSConfig path aliases (`@/*`, `~/*`) are not resolved in v1.
+- **No Custom Bundler Resolution**: Does not emulate custom Webpack, Vite, or framework-specific resolver plugins (such as custom extension aliases or dynamic runtime plugins).
 - **Ambiguous Matches**: When multiple files exist differing only by case (or multiple candidates share the same base name), Import Case Guard flags the ambiguity and suppresses Quick Fix to avoid guessing wrong.
 - **Static Analysis Only**: Dynamic path concatenation or runtime variable imports cannot be resolved.
 

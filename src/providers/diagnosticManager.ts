@@ -8,6 +8,7 @@ import { isPathExcluded, ExtensionConfig } from '../config';
 
 import * as path from 'path';
 import { parseRelativeSpecifier } from '../resolver/pathResolver';
+import { AliasConfigManager } from '../resolver/aliasConfig';
 
 export const DIAGNOSTIC_SOURCE = 'Import Case Guard';
 export const DIAGNOSTIC_CODE = 'import-case-guard.case-mismatch';
@@ -65,11 +66,13 @@ export class DiagnosticManager {
   private documentDependencies: Map<string, Set<string>> = new Map();
   private fs: IFileSystem;
   private cache: DirectoryCache;
+  private aliasConfigManager: AliasConfigManager;
 
   constructor(collection: vscode.DiagnosticCollection, fs?: IFileSystem, cache?: DirectoryCache) {
     this.collection = collection;
     this.fs = fs || new NodeFileSystem();
     this.cache = cache || new DirectoryCache();
+    this.aliasConfigManager = new AliasConfigManager();
   }
 
   getFileSystem(): IFileSystem {
@@ -78,6 +81,22 @@ export class DiagnosticManager {
 
   getCache(): DirectoryCache {
     return this.cache;
+  }
+
+  getAliasConfigManager(): AliasConfigManager {
+    return this.aliasConfigManager;
+  }
+
+  invalidateAliasConfig(configPath?: string): void {
+    if (configPath) {
+      this.aliasConfigManager.invalidateConfig(configPath);
+    } else {
+      this.aliasConfigManager.invalidateAll();
+    }
+  }
+
+  isDocumentAffectedByConfig(docUri: vscode.Uri, configPath: string): boolean {
+    return this.aliasConfigManager.isDocumentAffectedByConfig(docUri.fsPath, configPath);
   }
 
   getMismatchesForDocument(uri: vscode.Uri): FileMismatchData[] {
@@ -122,6 +141,7 @@ export class DiagnosticManager {
     this.mismatchMap.clear();
     this.documentDependencies.clear();
     this.cache.clear();
+    this.aliasConfigManager.invalidateAll();
   }
 
   scanFile(
@@ -174,11 +194,22 @@ export class DiagnosticManager {
       return [];
     }
 
-    const imports = scanImports(text);
+    const imports = scanImports(text, { includeNonRelative: true });
     const vscodeDiagnostics: vscode.Diagnostic[] = [];
     const mismatches: FileMismatchData[] = [];
     const deps = new Set<string>();
     const docDir = path.dirname(path.normalize(filePath));
+
+    const workspaceRoots = wsFolder
+      ? [wsFolder]
+      : vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath);
+    const aliasConfig = this.aliasConfigManager.getConfigForFile(filePath, this.fs, workspaceRoots);
+    if (aliasConfig) {
+      deps.add(path.normalize(aliasConfig.configFilePath));
+      for (const m of aliasConfig.mappings) {
+        deps.add(path.normalize(m.baseDir));
+      }
+    }
 
     for (const imp of imports) {
       // Record directory dependencies for targeted watcher rescans
@@ -200,7 +231,13 @@ export class DiagnosticManager {
         }
       }
 
-      const result = resolveAndValidateImport(filePath, imp.rawSpecifier, this.fs, this.cache);
+      const result = resolveAndValidateImport(
+        filePath,
+        imp.rawSpecifier,
+        this.fs,
+        this.cache,
+        aliasConfig
+      );
       if (!result || !result.hasMismatch) {
         continue;
       }
@@ -530,6 +567,7 @@ export class DiagnosticManager {
     this.mismatchMap.clear();
     this.documentDependencies.clear();
     this.cache.clear();
+    this.aliasConfigManager.invalidateAll();
   }
 }
 

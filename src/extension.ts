@@ -121,6 +121,11 @@ export function activate(context: vscode.ExtensionContext, customDm?: Diagnostic
       return;
     }
 
+    const baseName = path.basename(uri.fsPath).toLowerCase();
+    if (baseName === 'tsconfig.json' || baseName === 'jsconfig.json') {
+      diagnosticManager.invalidateAliasConfig(uri.fsPath);
+    }
+
     const parentDir = diagnosticManager.getCache().invalidateFile(uri.fsPath);
     pendingChangedDirs.add(parentDir);
 
