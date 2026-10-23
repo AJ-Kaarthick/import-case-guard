@@ -26,6 +26,9 @@ Module not found: Can't resolve './components/button' in '/project/src'
 
 **Import Case Guard** catches these casing mistakes directly in your editor as you type, providing diagnostics and contextual Quick Fixes before code reaches CI.
 
+![Import Case Guard Overview](media/overview.png)
+*Figure 1: Cross-platform casing trap: Local case-insensitive filesystems silently resolve mismatched import paths that fail on Linux CI/CD runners (illustrative preview).*
+
 ---
 
 ## Primary Workflow
@@ -133,6 +136,9 @@ import Button from "./components/button";
 import Button from "./components/Button";
 ```
 
+![Import Case Guard Quick Fix Preview](media/quick-fix-preview.png)
+*Figure 2: In-editor diagnostic warning, exact disk casing hover details, and 3-tiered Quick Fix menu (illustrative preview).*
+
 Place your cursor on the import and press `Ctrl+.` (Windows/Linux) or `Cmd+.` (macOS) to view the scoped remediation menu:
 
 1. **`Correct import casing to '...'`** (*Fix this import*):
@@ -147,7 +153,12 @@ Place your cursor on the import and press `Ctrl+.` (Windows/Linux) or `Cmd+.` (m
    - Suppresses redundant entries when all findings reside in a single file or when only a single finding exists.
 
 ### Bulk Fix Safety Principles
+
+![Import Case Guard Bulk Review Preview](media/bulk-review-preview.png)
+*Figure 3: Workspace bulk fix confirmation dialog, proposed diff summary, and multi-tier safety architecture (illustrative preview).*
+
 - **Coordinate Pre-Validation**: Every edit range is pre-validated against the source text before writing.
+- **Descending Offset Ordering**: Applies edits from bottom to top, preventing character offset shifts for earlier lines.
 - **Quote & Formatting Preservation**: Replaces only the interior string literal, preserving quote styles (`'`, `"`, and `` ` ``), indentation, and semicolons.
 - **Validation Failure Protection**: All edits are prevalidated and applied as a coordinated WorkspaceEdit. If prevalidation fails or the user cancels, no edits are applied.
 - **Standard Undoability**: All applied edits are standard undoable editor actions (`Ctrl+Z` / `Cmd+Z`).

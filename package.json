@@ -2,7 +2,8 @@
   "name": "import-case-guard",
   "displayName": "Import Case Guard",
   "description": "Catches local relative import-path casing mistakes that work on case-insensitive filesystems but fail on Linux CI/build systems.",
-  "version": "1.0.0",
+  "version": "1.0.1",
+  "icon": "media/icon.png",
   "publisher": "ajkaarthick",
   "author": {
     "name": "AJ Kaarthick"
