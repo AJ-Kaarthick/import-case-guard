@@ -9,7 +9,7 @@ All notable changes to the "import-case-guard" extension will be documented in t
 - High-resolution documentation graphics (`media/overview.png`, `media/quick-fix-preview.png`, `media/bulk-review-preview.png`):
   - Architecture overview illustrating the cross-platform filesystem case sensitivity trap (macOS/Windows silent pass vs Linux CI failure).
   - In-editor diagnostic hover and 3-tiered Quick Fix menu preview (`Ctrl+.` / `Cmd+.`).
-  - Workspace bulk fix confirmation dialog, atomic proposed diffs, and 4-tier safety invariants.
+  - Workspace bulk fix confirmation dialog, proposed diff summary, and multi-tier safety architecture.
 
 ### Changed
 - Configured `"icon": "media/icon.png"` in extension manifest (`package.json`).
